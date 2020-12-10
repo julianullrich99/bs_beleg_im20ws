@@ -1,0 +1,184 @@
+#!/bin/bash
+
+FILE="bib.csv"
+
+# zuerst checken ob alles passt
+
+showUsage(){
+  echo "BENUTZUNG:"
+  echo "Die gegebenen Argumente stimmen nicht."
+  echo "./s82874 [categories|count|isbn|longest|nopub|years]"
+  echo "oder"
+  echo "./s82874 search athor=xxxx"
+}
+
+if [ ! -f "$FILE" ]; then
+  echo "Datei $FILE existiert nicht."
+  exit 1
+fi
+
+if [ $# -gt 2 ] || [ $# -lt 1 ]; then
+  showUsage
+  exit 1
+fi
+
+# datei auf syntax prüfen
+# dabei in jeder Zeile gucken ob die regex passt -> sonst fehler und raus
+
+LNO=0 # line number
+
+cat $FILE | while read line; do
+
+  LNO=$(($LNO+1))
+
+  RET=`echo $line | grep -o -E ".*(;.*){7}"`
+
+  if [ ${#RET} -lt 1 ]; then # wenn kein return vom grep passt die zeile nicht rein
+    echo "Fehler in Zeile $LNO: $line"
+    exit 1
+  fi
+
+done
+
+
+#### funktionalität ####
+
+
+if [ "$1" = "categories" ]; then
+  # categories
+
+  cat $FILE | awk -F ";" '{print $4}' | sort | uniq | grep -E ".+" --color=never
+
+  if [ $? -ne 0 ]; then
+    echo "Fehler beim Ausführen."
+    exit 1
+  fi
+
+  exit 0
+
+elif [ "$1" = "count" ]; then
+  # count
+
+  echo "Anzahl der Einträge: `cat $FILE | wc -l`"
+
+  if [ $? -ne 0 ]; then
+    echo "Fehler beim Ausführen."
+    exit 1
+  fi
+
+  exit 0
+  
+elif [ "$1" = "isbn" ]; then
+  # isbn
+
+  ERROR=0
+  LNO=0
+
+  cat $FILE | while read line; do
+
+    LNO=$(($LNO+1))
+
+    # skippen wenn es keine ISBN gibt
+    ISBN=`echo $line | awk -F ";" '{print $8}'`
+    ISBN=${ISBN//-} # string/pattern/replace
+
+    if [ ${#ISBN} -eq 0 ]; then
+      continue
+    fi
+
+    # als nächstes checken dass es nur zahlen sind (hier wird auch die länge gecheckt
+
+    RET=`echo $ISBN | grep -E "\b(([0123456789]{9}[0123456789X]{1})|([0123456789]{13}))\b"`
+
+    if [ ${#RET} -lt 10 ]; then
+      echo "Fehler in Zeile $LNO (falsche Buchstaben/falsche Länge): $line"
+      ERROR=$(($ERROR+1)) #errorcounter hoch
+    fi
+
+    if [ ${#ISBN} -eq 10 ]; then # wenn es 10 stellen sind soll der mod geprüft werden
+      SUM=0
+      for (( i=0; i<10; i++ )); do
+        
+        if [ $i -eq 9 ] && [ "${ISBN:i:1}" = "X" ]; then
+          SUM=$(($SUM+100)) # x mit 10 replacen -> 10*10 = 100
+        else
+          SUM=$(($SUM+(($i+1)*${ISBN:i:1})))
+        fi
+      done
+
+      if [ $((SUM % 11)) -ne 0 ]; then
+        echo "Fehler in Zeile $LNO (Bedingung für ISBN nicht erfüllt): $line (SUM=$SUM)"
+      ERROR=$(($ERROR+1)) # errorcounter hoch
+      fi
+    fi
+
+  done
+
+  if [ $ERROR -eq 0 ]; then
+    echo "Alle ISBN erfolgreich geprüft."
+  else
+    # einfach exiten, fehlermeldungen waren schon vorher da
+    exit 1
+  fi
+  exit 0
+
+elif [ "$1" = "longest" ]; then
+  # longest
+
+  # das zweite awk um es nochmal schön zu formatieren
+  cat $FILE | awk -F ";" '{print $7 "|Titel: " $1 ", Autor: " $2 ", Seiten: " $7}' | sort -n -r | head -n1 | awk -F "|" '{print $2}'
+
+  if [ $? -ne 0 ]; then
+    echo "Fehler beim Ausführen."
+    exit 1
+  fi
+
+  exit 0
+
+elif [ "$1" = "nopub" ]; then
+  # nopub
+  cat $FILE | grep -E ".*(;.*){3};;" --color=never | awk -F ";" '{print "Titel: " $1 ", Autor: " $2}'
+
+  if [ $? -ne 0 ]; then
+    echo "Fehler beim Ausführen."
+    exit 1
+  fi
+
+  exit 0
+elif [ "$1" = "years" ]; then
+  # years
+  # grep kann irgendwie kein \d... deswegen die zahlen
+  cat $FILE | awk -F ";" '{print $5}' | awk -F "/" '{if (NF > 1) {print $3} else {print $0}}' | sort -n | uniq -c | awk '{print $2 " - " $1}' | grep -E "[0123456789]{4}.*" --color=never
+
+  if [ $? -ne 0 ]; then
+    echo "Fehler beim Ausführen."
+    exit 1
+  fi
+
+  exit 0
+elif [ "$1" = "search" ]; then
+  # search
+  if [ $# -ne 2 ]; then
+    echo "Fehler: Suchstring fehlt. Bsp: author=xxxx"
+    exit 1
+  fi
+
+  # form des paramteres prüfen
+  RET=`echo $2 | grep -E "author=.+"`
+  if [ ${#RET} -lt 1 ]; then
+    echo "Fehler im Suchstring."
+    exit 1
+  fi
+
+  # suchen
+  Q=$2
+  # hier müsste der string eigentlich noch escaped werden, aber das geht in der grep regex irgendwie nicht
+  cat $FILE | grep ".*;.*${Q:7}" 
+
+  exit 0
+  
+else
+  showUsage
+  exit 1
+fi
+
